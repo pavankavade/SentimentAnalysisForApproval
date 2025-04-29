@@ -14,7 +14,7 @@ from backend.approval_graph import run_approval_graph
 class ApprovalRequest(BaseModel):
     service_line: str
     threshold: int
-    justification_email: str # The email content shown to the user if threshold > 30
+    approval_email: str    # The email content shown to the user if threshold > 30
     user_reply: str        # The user's reply text
 
 class ApprovalResponse(BaseModel):
@@ -42,7 +42,7 @@ app.add_middleware(
     allow_methods=["*"]
 )
 
-@app.post("/process_approval")
+@app.post("/process-approval")
 async def process_approval(request: ApprovalRequest) -> ApprovalResponse:
     """
     Endpoint to process an approval request.
@@ -68,7 +68,7 @@ async def process_approval(request: ApprovalRequest) -> ApprovalResponse:
         graph_result = await run_approval_graph(
             service_line=request.service_line,
             threshold=request.threshold,
-            justification_email=request.justification_email, 
+            approval_email=request.approval_email, 
             user_reply=request.user_reply
         )
         
@@ -101,4 +101,5 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
     print(f"Starting FastAPI server on port {port}...")
     # Use reload=True for development to automatically reload server on code changes
-    uvicorn.run("main:app", host="0.0.0.0", port=port, reload=True) 
+    # Explicitly specify the app location for uvicorn when running with python -m
+    uvicorn.run("backend.main:app", host="0.0.0.0", port=port, reload=True) 

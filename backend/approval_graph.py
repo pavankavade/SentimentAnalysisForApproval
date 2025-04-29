@@ -13,9 +13,9 @@ class ApprovalState(TypedDict):
     """Represents the state of the approval workflow."""
     service_line: str
     threshold: int
-    justification_email: str # The email sent *to* the user (if threshold > 30)
+    approval_email: str    # The email sent *to* the user (if threshold > 30)
     user_reply: str        # The reply received *from* the user
-    classification: str    # Result of the LLM classification ('positive', 'negative', 'error')
+    classification: str    # Result of the LLM classification ('Approved', 'Not Approved', 'Error')
     final_status: str      # The final outcome ('Approved', 'Rejected', 'Error')
 
 # Define the nodes for our graph
@@ -24,18 +24,17 @@ async def classify_reply_node(state: ApprovalState) -> dict:
     """Classifies the user's reply using the LLM."""
     print("--- Classifying Reply Node ---")
     user_reply = state['user_reply']
+    approval_email = state['approval_email']
     
     # Handle the case where threshold was <= 30 and no reply is expected/needed
     # Or if the request failed before getting a reply
     if not user_reply:
-        print("No user reply provided, skipping classification.")
-        # If there's no reply because it was auto-approved, this node might not 
-        # even be hit depending on entry logic, but handling defensively.
-        # We might set a specific classification or let the graph handle it.
-        # For now, assume if this node is hit, classification is needed or implies rejection.
-        return {"classification": "negative"} 
+        print("No user reply provided, assuming Not Approved.")
+        # If threshold > 30, lack of reply means rejection.
+        return {"classification": "Not Approved"} 
         
-    classification_result = await get_reply_classification(user_reply)
+    # Pass both the original email and the reply
+    classification_result = await get_reply_classification(approval_email, user_reply)
     print(f"Classification Result: {classification_result}")
     return {"classification": classification_result}
 
@@ -43,12 +42,15 @@ def determine_final_status_node(state: ApprovalState) -> dict:
     """Determines the final status based on classification."""
     print("--- Determining Final Status Node ---")
     classification = state['classification']
+    
+    # Determine status based on the new classification values
     final_status = "Rejected" # Default to Rejected
-    if classification == 'positive':
+    if classification == 'Approved':
         final_status = "Approved"
-    elif classification == 'error':
+    elif classification == 'Error':
         final_status = "Error"
         print("Error during classification process.")
+    # 'Not Approved' maps to 'Rejected' final status
     
     print(f"Final Status: {final_status}")
     return {"final_status": final_status}
@@ -83,12 +85,12 @@ workflow.add_edge("determine_final_status", END)
 approval_graph_app = workflow.compile()
 
 # Function to run the graph (can be called from FastAPI)
-async def run_approval_graph(service_line: str, threshold: int, justification_email: str, user_reply: str) -> dict:
+async def run_approval_graph(service_line: str, threshold: int, approval_email: str, user_reply: str) -> dict:
     """Runs the approval graph with the given inputs."""
     initial_state = {
         "service_line": service_line,
         "threshold": threshold,
-        "justification_email": justification_email,
+        "approval_email": approval_email,
         "user_reply": user_reply,
         "classification": "", # Initial empty values
         "final_status": ""     # Initial empty values

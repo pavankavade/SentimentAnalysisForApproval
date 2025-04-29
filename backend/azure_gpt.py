@@ -1,86 +1,154 @@
 import os
+import asyncio
 from dotenv import load_dotenv
 from langchain_openai import AzureChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage, SystemMessage # Keep imports for context
 
-# Load environment variables from .env file
-load_dotenv()
+# Load environment variables from .env file, overriding existing OS variables
+load_dotenv(override=True)
 
-# Configure the Azure OpenAI client
+# --- Configuration ---
+AZURE_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT")
+AZURE_API_KEY = os.getenv("AZURE_OPENAI_API_KEY")
+AZURE_DEPLOYMENT = os.getenv("AZURE_OPENAI_CHAT_DEPLOYMENT_NAME")
+AZURE_API_VERSION = os.getenv("AZURE_OPENAI_API_VERSION")
+
+# --- Initialize LLM Client ---
+llm = None
 try:
+    if not all([AZURE_ENDPOINT, AZURE_API_KEY, AZURE_DEPLOYMENT, AZURE_API_VERSION]):
+        raise ValueError("One or more Azure OpenAI environment variables are missing.")
+
     llm = AzureChatOpenAI(
-        azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
-        api_key=os.getenv("AZURE_OPENAI_API_KEY"),
-        azure_deployment=os.getenv("AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"),
-        api_version=os.getenv("AZURE_OPENAI_API_VERSION"),
+        azure_endpoint=AZURE_ENDPOINT,
+        api_key=AZURE_API_KEY,
+        azure_deployment=AZURE_DEPLOYMENT,
+        api_version=AZURE_API_VERSION,
         temperature=0 # We want deterministic classification
     )
+    print("AzureChatOpenAI client initialized successfully.")
 except Exception as e:
-    print(f"Error initializing AzureChatOpenAI: {e}")
-    # Consider raising the exception or handling it more gracefully
-    # depending on application requirements. For now, we print and exit
-    # or allow subsequent code to fail if llm is None.
-    llm = None # Ensure llm is defined, even if initialization fails
+    print(f"ERROR: Error initializing AzureChatOpenAI: {e}")
+    # llm remains None
 
-# Define a simple output parser
+# --- Output Parser ---
 output_parser = StrOutputParser()
 
-# Define the classification prompt template
-# We ask for a single word response for easy parsing.
+# --- Prompt Template ---
+# Using the tuple format ("role", "template_string") for reliable placeholder substitution
 prompt_template = ChatPromptTemplate.from_messages([
-    SystemMessage(content="You are an assistant that analyzes email replies to determine if they signify approval or rejection. Respond with only the single word 'positive' if the reply indicates approval, and 'negative' if it indicates rejection or asks for more information."),
-    HumanMessage(content="Here is the user's reply:\n\n{user_reply}")
+    ("system", (
+        "Analyze the user reply sentiment based on the original request email. Is the reply an approval? "
+        "Consider replies like 'approved', 'yes', 'proceed', 'good to go', 'ok', 'confirm', 'confirmation' as clear approval. "
+        "Respond ONLY with the single word 'Approved' for approval or 'Not Approved' for anything else (rejection, questions, etc.)."
+        "Do not add any explanation or commentary."
+    )),
+    ("human", (
+        "Original Request Email:\n---\n{approval_email}\n---\n\n"
+        "User's Reply:\n---\n{user_reply}"
+    ))
 ])
 
-
-async def get_reply_classification(user_reply: str) -> str:
+# --- Classification Function ---
+async def get_reply_classification(approval_email: str, user_reply: str) -> str:
     """
-    Classifies the user's reply as 'positive' or 'negative' using Azure GPT-4o.
+    Classifies the user's reply as 'Approved' or 'Not Approved' using Azure GPT-4o,
+    considering the context of the original email.
 
     Args:
+        approval_email: The content of the original email sent for approval.
         user_reply: The text content of the user's reply.
 
     Returns:
-        A string, either 'positive' or 'negative'.
-        Returns 'error' if classification fails.
+        A string, either 'Approved' or 'Not Approved'.
+        Returns 'Error' if classification fails or LLM is not available.
     """
     if not llm:
-        print("Azure LLM client is not initialized.")
-        return "error"
-    
-    if not user_reply or not user_reply.strip():
-        return "negative" # Treat empty replies as negative
+        print("ERROR: Azure LLM client is not initialized in get_reply_classification.")
+        return "Error"
+
+    # Basic validation
+    if not isinstance(approval_email, str) or not isinstance(user_reply, str):
+        print(f"ERROR: Invalid input types. Email: {type(approval_email)}, Reply: {type(user_reply)}")
+        return "Error"
+
+    cleaned_user_reply = user_reply.strip()
+    if not cleaned_user_reply:
+        # print("User reply is empty or whitespace only. Classifying as Not Approved.") # Optional: log if needed
+        return "Not Approved"
 
     try:
+        input_data = {
+            "approval_email": approval_email,
+            "user_reply": user_reply
+        }
+
         # Create the chain
         chain = prompt_template | llm | output_parser
 
         # Invoke the chain asynchronously
-        result = await chain.ainvoke({"user_reply": user_reply})
+        result = await chain.ainvoke(input_data)
+        # print(f"LLM Raw Result: '{result}'") # Optional: uncomment for debugging LLM output format
 
-        # Basic validation of the result
-        cleaned_result = result.strip().lower()
-        if cleaned_result == "positive":
-            return "positive"
+        if result and isinstance(result, str):
+            if result.strip().lower() == "approved":
+                 # print(f"LLM result classified as: Approved") # Optional log
+                 return "Approved"
+            else:
+                 # print(f"LLM result classified as: Not Approved (Raw output: '{result}')") # Optional log
+                 return "Not Approved"
         else:
-            # Default to negative if the response isn't exactly "positive"
-            return "negative"
+             print(f"WARNING: LLM produced unexpected output: '{result}'. Classifying as Not Approved.")
+             return "Not Approved"
 
     except Exception as e:
-        print(f"Error during LLM classification: {e}")
-        return "error" # Indicate failure
+        print(f"ERROR during LLM classification: {e}")
+        print(f"Occurred with endpoint: {AZURE_ENDPOINT}, deployment: {AZURE_DEPLOYMENT}")
+        # Consider adding more detailed logging here if errors persist in production
+        # import traceback
+        # traceback.print_exc()
+        return "Error" # Indicate failure
 
-# Example usage (optional, for testing)
-# import asyncio
-# async def main():
-#     test_reply_positive = "Yes, I approve this request."
-#     test_reply_negative = "No, I cannot approve this at this time."
-#     classification_pos = await get_reply_classification(test_reply_positive)
-#     classification_neg = await get_reply_classification(test_reply_negative)
-#     print(f"Positive reply classification: {classification_pos}")
-#     print(f"Negative reply classification: {classification_neg}")
+# --- Example Usage (Optional) ---
+async def main():
+    print("\n--- Running Example Classification ---")
+    if not llm:
+        print("Cannot run example: LLM client not initialized.")
+        return
 
-# if __name__ == "__main__":
-#     asyncio.run(main()) 
+    test_approval_email = 'Subject: Action Required: test\n\nPlease review the request for Service Line: test (Threshold: 33).\n\nYour confirmation is needed to proceed. Please reply with your decision.\n\nThanks.'
+    test_user_reply_approve = 'Approved'
+    test_user_reply_confirm = 'confirmation'
+    test_user_reply_reject = 'No, cannot approve this now.'
+    test_user_reply_question = 'What is this for?'
+    test_user_reply_empty = ''
+
+    test_cases = {
+        "Direct 'Approved'": test_user_reply_approve,
+        "Confirmation": test_user_reply_confirm,
+        "Rejection": test_user_reply_reject,
+        "Question": test_user_reply_question,
+        "Empty Reply": test_user_reply_empty,
+    }
+
+    for name, reply in test_cases.items():
+        print(f"\n--- Testing Case: {name} ---")
+        print(f"User Reply: '{reply}'")
+        classification_result = await get_reply_classification(test_approval_email, reply)
+        # Print the final outcome clearly
+        print(f"Classification Result: {classification_result}")
+        # await asyncio.sleep(1) # Optional delay
+
+    print("\n--- Example Classification Finished ---")
+
+
+if __name__ == "__main__":
+    if llm:
+        try:
+            asyncio.run(main())
+        except Exception as main_e:
+            print(f"ERROR: Error running main async function: {main_e}")
+    else:
+        print("Script finished: LLM client failed to initialize, cannot run example.")

@@ -2,11 +2,11 @@
 
 const API_BASE_URL = 'http://localhost:8000'; // Adjust if your backend runs elsewhere
 
-export async function sendApprovalRequest(serviceLine: string, threshold: number, justificationEmail: string, userReply: string) {
+export async function sendApprovalRequest(serviceLine: string, threshold: number, approvalEmail: string, userReply: string) {
   const payload = {
     service_line: serviceLine,
     threshold: threshold,
-    justification_email: justificationEmail,
+    approval_email: approvalEmail,
     user_reply: userReply,
   };
 

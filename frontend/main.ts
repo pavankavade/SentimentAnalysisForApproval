@@ -5,7 +5,7 @@ const approvalForm = document.getElementById('approval-form') as HTMLFormElement
 const serviceLineInput = document.getElementById('service-line') as HTMLInputElement;
 const thresholdInput = document.getElementById('threshold') as HTMLInputElement;
 const approvalSection = document.getElementById('approval-section') as HTMLDivElement;
-const justificationTextarea = document.getElementById('justification') as HTMLTextAreaElement;
+const approvalEmailTextarea = document.getElementById('approval-email') as HTMLTextAreaElement;
 const replyTextarea = document.getElementById('reply') as HTMLTextAreaElement;
 const sendReplyButton = document.getElementById('send-reply') as HTMLButtonElement;
 const resultMessageDiv = document.getElementById('result-message') as HTMLDivElement;
@@ -23,10 +23,12 @@ approvalForm.addEventListener('submit', (event) => {
     approvalSection.style.display = 'none'; // Hide approval section initially
 
     if (currentThreshold > 30) {
-        // Prepare justification email content
-        justificationTextarea.value = `Subject: Approval Request for ${currentServiceLine}
+        // Prepare approval email content
+        approvalEmailTextarea.value = `Subject: Action Required: ${currentServiceLine}
 
-Please review and approve the task associated with Service Line: ${currentServiceLine} which has a threshold of ${currentThreshold}.
+Please review the request for Service Line: ${currentServiceLine} (Threshold: ${currentThreshold}).
+
+Your confirmation is needed to proceed. Please reply with your decision.
 
 Thanks.`;
         approvalSection.style.display = 'block'; // Show the approval section
@@ -41,7 +43,7 @@ Thanks.`;
 // Handle reply submission
 sendReplyButton.addEventListener('click', async () => {
     const userReply = replyTextarea.value;
-    const justificationEmail = justificationTextarea.value; // Already populated
+    const approvalEmail = approvalEmailTextarea.value; // Already populated
 
     if (!userReply.trim()) {
         alert('Please enter your reply.');
@@ -52,7 +54,7 @@ sendReplyButton.addEventListener('click', async () => {
     sendReplyButton.disabled = true; // Disable button during processing
 
     try {
-        const result = await sendApprovalRequest(currentServiceLine, currentThreshold, justificationEmail, userReply);
+        const result = await sendApprovalRequest(currentServiceLine, currentThreshold, approvalEmail, userReply);
         // Display result from backend
         resultMessageDiv.textContent = `Backend Response: ${result.status}`; // Adjust based on actual backend response structure
         approvalSection.style.display = 'none'; // Hide section after processing
