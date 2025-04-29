@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Approval App</title>
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <div id="app">
+      <h1>Approval Request</h1>
+      <form id="approval-form">
+        <div class="form-group">
+          <label for="service-line">Service Line:</label>
+          <input type="text" id="service-line" name="service-line" required>
+        </div>
+        <div class="form-group">
+          <label for="threshold">Threshold:</label>
+          <input type="number" id="threshold" name="threshold" required>
+        </div>
+        <button type="submit">Submit</button>
+      </form>
+
+      <div id="approval-section" style="display: none;">
+        <div class="form-group">
+            <label for="justification">Justification:</label>
+            <textarea id="justification" name="justification" rows="10" readonly></textarea>
+        </div>
+        <div class="form-group">
+          <label for="reply">Your Reply:</label>
+          <textarea id="reply" name="reply" rows="5" required></textarea>
+        </div>
+        <button id="send-reply">Send</button>
+      </div>
+
+       <div id="result-message" style="margin-top: 20px; font-weight: bold;"></div>
+    </div>
+    <script type="module" src="/main.ts"></script>
+  </body>
+</html> 

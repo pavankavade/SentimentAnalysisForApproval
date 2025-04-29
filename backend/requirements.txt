@@ -1,0 +1,11 @@
+fastapi
+uvicorn[standard]
+langchain
+langgraph
+langchain-openai
+python-dotenv
+pydantic
+
+# Add specific versions if needed, e.g.:
+# fastapi==0.110.0
+# langgraph==0.0.44 

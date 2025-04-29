@@ -1,0 +1,91 @@
+body {
+  font-family: sans-serif;
+  margin: 2em;
+  background-color: #f4f4f4;
+}
+
+#app {
+  max-width: 600px;
+  margin: 0 auto;
+  padding: 2em;
+  background-color: #fff;
+  border-radius: 8px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+h1 {
+  color: #333;
+  text-align: center;
+  margin-bottom: 1.5em;
+}
+
+.form-group {
+  margin-bottom: 1em;
+}
+
+label {
+  display: block;
+  margin-bottom: 0.5em;
+  color: #555;
+}
+
+input[type="text"],
+input[type="number"],
+textarea {
+  width: 100%;
+  padding: 0.8em;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  box-sizing: border-box; /* Include padding and border in the element's total width and height */
+}
+
+textarea {
+  resize: vertical; /* Allow vertical resizing */
+}
+
+button {
+  padding: 0.8em 1.5em;
+  background-color: #007bff;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 1em;
+  transition: background-color 0.3s ease;
+}
+
+button:hover {
+  background-color: #0056b3;
+}
+
+button:disabled {
+    background-color: #cccccc;
+    cursor: not-allowed;
+}
+
+#approval-section {
+    margin-top: 1.5em;
+    padding-top: 1.5em;
+    border-top: 1px solid #eee;
+}
+
+#result-message {
+  margin-top: 1.5em;
+  padding: 1em;
+  border-radius: 4px;
+  font-weight: bold;
+}
+
+/* Add styles for potential success/error messages in result-message */
+/* Example:
+.success {
+    background-color: #d4edda;
+    color: #155724;
+    border: 1px solid #c3e6cb;
+}
+.error {
+    background-color: #f8d7da;
+    color: #721c24;
+    border: 1px solid #f5c6cb;
+}
+*/ 
