@@ -19,6 +19,14 @@ let currentServiceLine = '';
 let currentThreshold = 0;
 let lastApprovalPayload: any = null;
 
+// Update clarification message with service line and threshold
+function updateClarificationMessage() {
+    const clarificationMessage = document.getElementById('clarification-message') as HTMLTextAreaElement;
+    if (clarificationMessage) {
+        clarificationMessage.value = `Above mentioned details are not sufficient for Service Line: ${currentServiceLine} (Threshold: ${currentThreshold}). We need below inputs in this format:\nName: <Full Name>\nYears of Experience: <Number>\nSL to SL change: <From> to <To>`;
+    }
+}
+
 // Handle initial form submission
 approvalForm.addEventListener('submit', (event) => {
     event.preventDefault(); // Prevent default form submission
@@ -71,6 +79,7 @@ sendReplyButton.addEventListener('click', async () => {
                 approvalEmail,
                 userReply
             };
+            updateClarificationMessage();
             resultMessageDiv.textContent = 'Clarification required. Please provide details as hiring manager.';
             return;
         }
@@ -133,11 +142,10 @@ if (sendClarificationButton) {
             hiringManagerReplyTextarea.value = '';
         } catch (error) {
             console.error('Error sending clarification:', error);
-            // Try to extract missing fields from error message
+            // Always show 'Rejected' and a generic message for missing fields
             const errMsg = (error as Error).message || '';
-            const missingMatch = errMsg.match(/Missing fields: (.+)$/);
-            if (missingMatch) {
-                resultMessageDiv.textContent = `Error: Missing required fields: ${missingMatch[1]}`;
+            if (errMsg.includes('Missing or invalid hiring manager details')) {
+                resultMessageDiv.textContent = 'Rejected. Missing or invalid hiring manager details.';
             } else {
                 resultMessageDiv.textContent = `Error: ${errMsg}`;
             }
