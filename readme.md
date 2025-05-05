@@ -4,9 +4,9 @@
 
 ```mermaid
 flowchart TD
-    User[User (Browser)]
-    Frontend[Frontend (HTML/TS)]
-    Backend[Backend (FastAPI)]
+    User[User Browser]
+    Frontend[Frontend HTML/TS]
+    Backend[Backend FastAPI]
     LangGraph[LangGraph Approval Graph]
     AzureGPT[Azure OpenAI GPT]
 
