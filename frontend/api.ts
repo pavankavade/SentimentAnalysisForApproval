@@ -36,4 +36,4 @@ export async function sendApprovalRequest(serviceLine: string, threshold: number
     console.error('API request failed:', error);
     throw error; // Re-throw the error to be handled by the caller
   }
-} 
+}

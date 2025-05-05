@@ -13,11 +13,11 @@
       <form id="approval-form">
         <div class="form-group">
           <label for="service-line">Service Line:</label>
-          <input type="text" id="service-line" name="service-line" required>
+          <input type="text" id="service-line" name="service-line" value="Test" required>
         </div>
         <div class="form-group">
           <label for="threshold">Threshold:</label>
-          <input type="number" id="threshold" name="threshold" required>
+          <input type="number" id="threshold" name="threshold" value="55" required>
         </div>
         <button type="submit">Submit</button>
       </form>
@@ -29,13 +29,31 @@
         </div>
         <div class="form-group">
           <label for="reply">Your Reply:</label>
-          <textarea id="reply" name="reply" rows="5" required></textarea>
+          <textarea id="reply" name="reply" rows="5" required>need more information</textarea>
         </div>
         <button id="send-reply">Send</button>
+      </div>
+
+      <div id="clarification-section" style="display: none; margin-top: 2em;">
+        <h2>Redirect to hiring manager</h2>
+        <div class="form-group">
+          <label for="clarification-message">Message to Hiring Manager:</label>
+          <textarea id="clarification-message" rows="4" readonly>Above mentioned details are not sufficient. We need below inputs in this format:
+Name: <Full Name>
+Years of Experience: <Number>
+SL to SL change: <From> to <To></textarea>
+        </div>
+        <div class="form-group">
+          <label for="hiring-manager-reply">Hiring Manager Reply:</label>
+          <textarea id="hiring-manager-reply" name="hiring-manager-reply" rows="5" required>Name: John Doe
+Years of Experience: 8
+SL to SL change: Consulting to Technology</textarea>
+        </div>
+        <button id="send-clarification">Submit</button>
       </div>
 
        <div id="result-message" style="margin-top: 20px; font-weight: bold;"></div>
     </div>
     <script type="module" src="/main.ts"></script>
   </body>
-</html> 
+</html>

@@ -18,8 +18,16 @@ class ApprovalRequest(BaseModel):
     user_reply: str        # The user's reply text
 
 class ApprovalResponse(BaseModel):
-    status: str # e.g., "Approved", "Rejected", "Error", "Auto-Approved"
+    status: str # e.g., "Approved", "Rejected", "Error", "Auto-Approved", "Clarification"
     detail: str | None = None # Optional field for more details
+    extracted_data: dict | None = None # Optional field for extracted data
+
+class ClarificationRequest(BaseModel):
+    service_line: str
+    threshold: int
+    approval_email: str
+    user_reply: str
+    hiring_manager_reply: str
 
 # --- FastAPI Application Setup ---
 
@@ -77,6 +85,9 @@ async def process_approval(request: ApprovalRequest) -> ApprovalResponse:
         final_status = graph_result.get('final_status', 'Error') # Default to Error if key missing
         detail_message = f"Reply classified as: {graph_result.get('classification', 'N/A')}"
         
+        if final_status == "Clarification":
+            return ApprovalResponse(status="Clarification", detail="Clarification required from hiring manager.")
+        
         if final_status == "Error":
              print("Error occurred within the approval graph.")
              # Consider more specific error handling based on graph output
@@ -88,6 +99,40 @@ async def process_approval(request: ApprovalRequest) -> ApprovalResponse:
         print(f"Error processing approval request: {e}")
         # Log the exception details for debugging
         # Consider more specific exception handling (e.g., Azure connection errors)
+        raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {str(e)}")
+
+@app.post("/process-clarification")
+async def process_clarification(request: ClarificationRequest) -> ApprovalResponse:
+    """
+    Endpoint to process a clarification request.
+    - Runs the LangGraph workflow with the hiring manager's reply.
+    - Extracts and validates hiring manager details.
+    """
+    print(f"Received clarification request: {request.dict()}")
+    try:
+        graph_result = await run_approval_graph(
+            service_line=request.service_line,
+            threshold=request.threshold,
+            approval_email=request.approval_email,
+            user_reply=request.user_reply,
+            hiring_manager_reply=request.hiring_manager_reply
+        )
+        print(f"Clarification Graph Result: {graph_result}")
+
+        final_status = graph_result.get('final_status', 'Error') # Default to Error if key missing
+        extracted_data = graph_result.get('extracted_data') # Extracted data from the graph result
+        missing_fields = graph_result.get('missing_fields', [])
+
+        if final_status == "Approved" and extracted_data:
+            return ApprovalResponse(status="Approved", detail="Hiring manager details extracted and approved.", extracted_data=extracted_data)
+        elif final_status == "Error" and missing_fields:
+            raise HTTPException(status_code=400, detail=f"Missing or invalid hiring manager details. Missing fields: {', '.join(missing_fields)}")
+        else:
+            raise HTTPException(status_code=400, detail="Missing or invalid hiring manager details.")
+
+    except Exception as e:
+        print(f"Error processing clarification: {e}")
+        # Log the exception details for debugging
         raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {str(e)}")
 
 # --- Run the application ---
@@ -102,4 +147,4 @@ if __name__ == "__main__":
     print(f"Starting FastAPI server on port {port}...")
     # Use reload=True for development to automatically reload server on code changes
     # Explicitly specify the app location for uvicorn when running with python -m
-    uvicorn.run("backend.main:app", host="0.0.0.0", port=port, reload=True) 
+    uvicorn.run("backend.main:app", host="0.0.0.0", port=port, reload=True)

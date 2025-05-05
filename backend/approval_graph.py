@@ -6,7 +6,7 @@ from langgraph.graph import StateGraph, END
 # We use a relative import assuming main.py will run from the backend directory's parent
 # or that the backend directory is added to PYTHONPATH.
 # If running main.py directly within backend/, use: from azure_gpt import ...
-from .azure_gpt import get_reply_classification
+from .azure_gpt import get_reply_classification, extract_hiring_manager_fields
 
 # Define the state structure for our graph
 class ApprovalState(TypedDict):
@@ -15,8 +15,11 @@ class ApprovalState(TypedDict):
     threshold: int
     approval_email: str    # The email sent *to* the user (if threshold > 30)
     user_reply: str        # The reply received *from* the user
-    classification: str    # Result of the LLM classification ('Approved', 'Not Approved', 'Error')
+    classification: str    # Result of the LLM classification ('Approved', 'Not Approved', 'Clarification', 'Error')
     final_status: str      # The final outcome ('Approved', 'Rejected', 'Error')
+    clarification_needed: bool  # True if clarification is required
+    hiring_manager_reply: str   # The reply from the hiring manager
+    extracted_data: dict        # Extracted info from hiring manager
 
 # Define the nodes for our graph
 
@@ -31,61 +34,90 @@ async def classify_reply_node(state: ApprovalState) -> dict:
     if not user_reply:
         print("No user reply provided, assuming Not Approved.")
         # If threshold > 30, lack of reply means rejection.
-        return {"classification": "Not Approved"} 
+        return {"classification": "Not Approved", "clarification_needed": False} 
         
     # Pass both the original email and the reply
     classification_result = await get_reply_classification(approval_email, user_reply)
     print(f"Classification Result: {classification_result}")
-    return {"classification": classification_result}
+    clarification_needed = classification_result == "Clarification"
+    return {"classification": classification_result, "clarification_needed": clarification_needed}
 
-def determine_final_status_node(state: ApprovalState) -> dict:
-    """Determines the final status based on classification."""
-    print("--- Determining Final Status Node ---")
+async def clarification_node(state: ApprovalState) -> dict:
+    """Handles clarification by waiting for hiring manager reply and extracting required fields."""
+    print("--- Clarification Node ---")
+    hiring_manager_reply = state.get('hiring_manager_reply', '')
+    approval_email = state.get('approval_email', '')
+    if not hiring_manager_reply:
+        print("No hiring manager reply provided.")
+        return {"final_status": "Error"}
+    # Use LLM extraction instead of regex
+    result = await extract_hiring_manager_fields(approval_email, hiring_manager_reply)
+    status = result.get("status", "Error")
+    extracted = result.get("extracted_data", {})
+    missing = result.get("missing_fields", [])
+    if status == "Approved" and all(extracted.values()):
+        print(f"Extracted Data: {extracted}")
+        return {"final_status": "Approved", "extracted_data": extracted}
+    else:
+        print(f"Missing required fields in hiring manager reply or not approved. Missing: {missing}")
+        return {"final_status": "Error", "missing_fields": missing}
+
+async def set_status_node(state: ApprovalState) -> dict:
+    """Sets the status based on classification."""
+    print("--- Setting Status Node ---")
     classification = state['classification']
-    
-    # Determine status based on the new classification values
     final_status = "Rejected" # Default to Rejected
     if classification == 'Approved':
         final_status = "Approved"
+    elif classification == 'Clarification':
+        final_status = "Clarification"
     elif classification == 'Error':
         final_status = "Error"
         print("Error during classification process.")
-    # 'Not Approved' maps to 'Rejected' final status
-    
     print(f"Final Status: {final_status}")
     return {"final_status": final_status}
 
 # Define the conditional logic for branching
-def decide_next_step(state: ApprovalState) -> str:
-    """Decides the next step based on the classification."""
-    print("--- Decision Node ---")
-    # In this simple graph, classification directly leads to final status determination
-    # This node might be more complex in graphs with more steps.
-    # For now, it always goes to the final status node after classification.
-    return "determine_final_status"
-
+def decide_next_step(state: ApprovalState) -> dict:
+    """Decides the next step based on the classification and presence of hiring manager reply."""
+    if state.get("final_status") == "Clarification":
+        # Only proceed to clarification node if hiring_manager_reply is present
+        if state.get("hiring_manager_reply"):
+            return {"next": "clarification"}
+        else:
+            # End the graph here, wait for separate trigger (from /process-clarification)
+            return {"next": END}
+    return {"next": END}
 
 # Create the StateGraph
 workflow = StateGraph(ApprovalState)
 
 # Add nodes to the graph
 workflow.add_node("classify_reply", classify_reply_node)
-workflow.add_node("determine_final_status", determine_final_status_node)
+workflow.add_node("set_status", set_status_node)
+workflow.add_node("decision", decide_next_step)
+workflow.add_node("clarification", clarification_node)
 
 # Define the entry point
 workflow.set_entry_point("classify_reply")
 
 # Add edges
-# After classifying, always go to determine the final status
-workflow.add_edge("classify_reply", "determine_final_status")
-# The determine_final_status node is the end of this simple workflow
-workflow.add_edge("determine_final_status", END)
+workflow.add_edge("classify_reply", "set_status")
+workflow.add_edge("set_status", "decision")
+workflow.add_conditional_edges(
+    "decision",
+    lambda state: state["next"],
+    {
+        "clarification": "clarification",
+        END: END,
+    }
+)
 
 # Compile the graph into a runnable application
 approval_graph_app = workflow.compile()
 
 # Function to run the graph (can be called from FastAPI)
-async def run_approval_graph(service_line: str, threshold: int, approval_email: str, user_reply: str) -> dict:
+async def run_approval_graph(service_line: str, threshold: int, approval_email: str, user_reply: str, hiring_manager_reply: str = "") -> dict:
     """Runs the approval graph with the given inputs."""
     initial_state = {
         "service_line": service_line,
@@ -93,7 +125,10 @@ async def run_approval_graph(service_line: str, threshold: int, approval_email: 
         "approval_email": approval_email,
         "user_reply": user_reply,
         "classification": "", # Initial empty values
-        "final_status": ""     # Initial empty values
+        "final_status": "",     # Initial empty values
+        "clarification_needed": False,
+        "hiring_manager_reply": hiring_manager_reply,
+        "extracted_data": {},
     }
     # Use ainvoke for asynchronous execution
     final_state = await approval_graph_app.ainvoke(initial_state)
@@ -117,4 +152,4 @@ async def run_approval_graph(service_line: str, threshold: int, approval_email: 
 #     print("\nFinal State (Auto/No Reply):", result_auto)
 #
 # if __name__ == "__main__":
-#     asyncio.run(main_test()) 
+#     asyncio.run(main_test())

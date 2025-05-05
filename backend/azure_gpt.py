@@ -40,9 +40,10 @@ output_parser = StrOutputParser()
 # Using the tuple format ("role", "template_string") for reliable placeholder substitution
 prompt_template = ChatPromptTemplate.from_messages([
     ("system", (
-        "Analyze the user reply sentiment based on the original request email. Is the reply an approval? "
-        "Consider replies like 'approved', 'yes', 'proceed', 'good to go', 'ok', 'confirm', 'confirmation' as clear approval. "
-        "Respond ONLY with the single word 'Approved' for approval or 'Not Approved' for anything else (rejection, questions, etc.)."
+        "Analyze the user reply sentiment based on the original request email. Classify the reply as one of the following: 'Approved', 'Not Approved', or 'Clarification'. "
+        "If the reply is an approval (e.g., contains 'approved', 'yes', 'proceed', 'good to go', 'ok', 'confirm', 'confirmation'), respond ONLY with 'Approved'. "
+        "If the reply is a rejection or negative (e.g., 'no', 'not approved', 'cannot', 'reject'), respond ONLY with 'Not Approved'. "
+        "If the reply asks for more information or clarification (e.g., contains questions like 'what', 'why', 'how', 'can you explain', 'need more info', 'clarify', 'details', 'please provide', 'could you'), respond ONLY with 'Clarification'. "
         "Do not add any explanation or commentary."
     )),
     ("human", (
@@ -51,10 +52,67 @@ prompt_template = ChatPromptTemplate.from_messages([
     ))
 ])
 
+# --- Clarification Extraction Function ---
+clarification_prompt_template = ChatPromptTemplate.from_messages([
+    ("system", (
+        "You are an assistant that extracts required fields from a hiring manager's reply. "
+        "Given the original approval email and the hiring manager's reply, extract the following fields: Name, Years of Experience, SL to SL change. "
+        "Respond ONLY in the following JSON format: {{\"Name\": ..., \"Years of Experience\": ..., \"SL to SL change\": ...}}. "
+        "If any field is missing or unclear, set its value to null. "
+        "If all fields are present and non-null, respond with JSON and the word 'Approved' on a new line. "
+        "If any field is missing, respond with JSON and the word 'Not Approved' on a new line. "
+        "Do not add any explanation or commentary."
+    )),
+    ("human", (
+        "Original Approval Email:\n---\n{approval_email}\n---\n\n"
+        "Hiring Manager Reply:\n---\n{hiring_manager_reply}"
+    ))
+])
+
+async def extract_hiring_manager_fields(approval_email: str, hiring_manager_reply: str) -> dict:
+    """
+    Uses Azure GPT to extract Name, Years of Experience, and SL to SL change from the hiring manager's reply.
+    Returns a dict: { 'status': 'Approved'|'Not Approved'|'Error', 'extracted_data': {...}, 'missing_fields': [...] }
+    """
+    if not llm:
+        print("ERROR: Azure LLM client is not initialized in extract_hiring_manager_fields.")
+        return {"status": "Error", "extracted_data": {}, "missing_fields": ["LLM not initialized"]}
+
+    required_fields = ["Name", "Years of Experience", "SL to SL change"]
+    try:
+        input_data = {
+            "approval_email": approval_email,
+            "hiring_manager_reply": hiring_manager_reply
+        }
+        chain = clarification_prompt_template | llm | output_parser
+        result = await chain.ainvoke(input_data)
+        # Expecting: JSON on first line, status on second line
+        if isinstance(result, str):
+            lines = result.strip().split("\n")
+            json_part = lines[0]
+            status = lines[1].strip() if len(lines) > 1 else "Not Approved"
+            import json as pyjson
+            try:
+                extracted = pyjson.loads(json_part)
+            except Exception as e:
+                print(f"Failed to parse JSON from LLM: {e}, raw: {json_part}")
+                extracted = {}
+            # Check for missing fields
+            missing = [field for field in required_fields if not extracted.get(field)]
+            if missing:
+                status = "Not Approved"
+            return {"status": status, "extracted_data": extracted, "missing_fields": missing}
+        else:
+            print(f"Unexpected LLM output: {result}")
+            return {"status": "Error", "extracted_data": {}, "missing_fields": ["Unexpected LLM output"]}
+    except Exception as e:
+        print(f"ERROR during clarification extraction: {e}")
+        return {"status": "Error", "extracted_data": {}, "missing_fields": [str(e)]}
+
 # --- Classification Function ---
 async def get_reply_classification(approval_email: str, user_reply: str) -> str:
     """
-    Classifies the user's reply as 'Approved' or 'Not Approved' using Azure GPT-4o,
+    Classifies the user's reply as 'Approved', 'Not Approved', or 'Clarification' using Azure GPT-4o,
     considering the context of the original email.
 
     Args:
@@ -62,7 +120,7 @@ async def get_reply_classification(approval_email: str, user_reply: str) -> str:
         user_reply: The text content of the user's reply.
 
     Returns:
-        A string, either 'Approved' or 'Not Approved'.
+        A string: 'Approved', 'Not Approved', or 'Clarification'.
         Returns 'Error' if classification fails or LLM is not available.
     """
     if not llm:
@@ -76,7 +134,6 @@ async def get_reply_classification(approval_email: str, user_reply: str) -> str:
 
     cleaned_user_reply = user_reply.strip()
     if not cleaned_user_reply:
-        # print("User reply is empty or whitespace only. Classifying as Not Approved.") # Optional: log if needed
         return "Not Approved"
 
     try:
@@ -85,31 +142,25 @@ async def get_reply_classification(approval_email: str, user_reply: str) -> str:
             "user_reply": user_reply
         }
 
-        # Create the chain
         chain = prompt_template | llm | output_parser
-
-        # Invoke the chain asynchronously
         result = await chain.ainvoke(input_data)
-        # print(f"LLM Raw Result: '{result}'") # Optional: uncomment for debugging LLM output format
-
+        print(f"LLM Result: {result}")
         if result and isinstance(result, str):
-            if result.strip().lower() == "approved":
-                 # print(f"LLM result classified as: Approved") # Optional log
-                 return "Approved"
+            result_clean = result.strip().lower()
+            if result_clean == "approved":
+                return "Approved"
+            elif result_clean == "clarification":
+                return "Clarification"
             else:
-                 # print(f"LLM result classified as: Not Approved (Raw output: '{result}')") # Optional log
-                 return "Not Approved"
+                return "Not Approved"
         else:
-             print(f"WARNING: LLM produced unexpected output: '{result}'. Classifying as Not Approved.")
-             return "Not Approved"
+            print(f"WARNING: LLM produced unexpected output: '{result}'. Classifying as Not Approved.")
+            return "Not Approved"
 
     except Exception as e:
         print(f"ERROR during LLM classification: {e}")
         print(f"Occurred with endpoint: {AZURE_ENDPOINT}, deployment: {AZURE_DEPLOYMENT}")
-        # Consider adding more detailed logging here if errors persist in production
-        # import traceback
-        # traceback.print_exc()
-        return "Error" # Indicate failure
+        return "Error"
 
 # --- Example Usage (Optional) ---
 async def main():
