@@ -1,0 +1,547 @@
+
+=========== FILE: frontend\api.ts ===========
+// Placeholder for API communication logic
+
+const API_BASE_URL = 'http://localhost:8000'; // Adjust if your backend runs elsewhere
+
+export async function sendApprovalRequest(serviceLine: string, threshold: number, approvalEmail: string, userReply: string) {
+  const payload = {
+    service_line: serviceLine,
+    threshold: threshold,
+    approval_email: approvalEmail,
+    user_reply: userReply,
+  };
+
+  try {
+    const response = await fetch(`${API_BASE_URL}/process-approval`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+      // Try to parse error response from backend if possible
+      let errorDetail = `HTTP error! status: ${response.status}`;
+      try {
+          const errorData = await response.json();
+          errorDetail += ` - ${errorData.detail || JSON.stringify(errorData)}`;
+      } catch (e) {
+          // Ignore if response is not JSON or empty
+      }
+      throw new Error(errorDetail);
+    }
+
+    return await response.json(); // Assuming the backend returns JSON
+  } catch (error) {
+    console.error('API request failed:', error);
+    throw error; // Re-throw the error to be handled by the caller
+  }
+} 
+
+
+=========== FILE: frontend\main.ts ===========
+import { sendApprovalRequest } from './api';
+
+// Get DOM elements
+const approvalForm = document.getElementById('approval-form') as HTMLFormElement;
+const serviceLineInput = document.getElementById('service-line') as HTMLInputElement;
+const thresholdInput = document.getElementById('threshold') as HTMLInputElement;
+const approvalSection = document.getElementById('approval-section') as HTMLDivElement;
+const approvalEmailTextarea = document.getElementById('approval-email') as HTMLTextAreaElement;
+const replyTextarea = document.getElementById('reply') as HTMLTextAreaElement;
+const sendReplyButton = document.getElementById('send-reply') as HTMLButtonElement;
+const resultMessageDiv = document.getElementById('result-message') as HTMLDivElement;
+
+let currentServiceLine = '';
+let currentThreshold = 0;
+
+// Handle initial form submission
+approvalForm.addEventListener('submit', (event) => {
+    event.preventDefault(); // Prevent default form submission
+
+    currentServiceLine = serviceLineInput.value;
+    currentThreshold = parseInt(thresholdInput.value, 10);
+    resultMessageDiv.textContent = ''; // Clear previous result
+    approvalSection.style.display = 'none'; // Hide approval section initially
+
+    if (currentThreshold > 30) {
+        // Prepare approval email content
+        approvalEmailTextarea.value = `Subject: Action Required: ${currentServiceLine}
+
+Please review the request for Service Line: ${currentServiceLine} (Threshold: ${currentThreshold}).
+
+Your confirmation is needed to proceed. Please reply with your decision.
+
+Thanks.`;
+        approvalSection.style.display = 'block'; // Show the approval section
+    } else {
+        // Automatically approved
+        resultMessageDiv.textContent = 'Task automatically approved (Threshold <= 30).';
+        // Optionally, you could send this to the backend for logging
+        // sendApprovalRequest(currentServiceLine, currentThreshold, '', 'Auto-approved');
+    }
+});
+
+// Handle reply submission
+sendReplyButton.addEventListener('click', async () => {
+    const userReply = replyTextarea.value;
+    const approvalEmail = approvalEmailTextarea.value; // Already populated
+
+    if (!userReply.trim()) {
+        alert('Please enter your reply.');
+        return;
+    }
+
+    resultMessageDiv.textContent = 'Processing...'; // Show feedback
+    sendReplyButton.disabled = true; // Disable button during processing
+
+    try {
+        const result = await sendApprovalRequest(currentServiceLine, currentThreshold, approvalEmail, userReply);
+        // Display result from backend
+        resultMessageDiv.textContent = `Backend Response: ${result.status}`; // Adjust based on actual backend response structure
+        approvalSection.style.display = 'none'; // Hide section after processing
+        approvalForm.reset(); // Reset the initial form
+        replyTextarea.value = ''; // Clear reply textarea
+
+    } catch (error) {
+        console.error('Error sending reply:', error);
+        resultMessageDiv.textContent = `Error: ${(error as Error).message}`; // Display error
+    } finally {
+        sendReplyButton.disabled = false; // Re-enable button
+    }
+}); 
+
+
+=========== FILE: frontend\index.html ===========
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Approval App</title>
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <div id="app">
+      <h1>Approval Request</h1>
+      <form id="approval-form">
+        <div class="form-group">
+          <label for="service-line">Service Line:</label>
+          <input type="text" id="service-line" name="service-line" required>
+        </div>
+        <div class="form-group">
+          <label for="threshold">Threshold:</label>
+          <input type="number" id="threshold" name="threshold" required>
+        </div>
+        <button type="submit">Submit</button>
+      </form>
+
+      <div id="approval-section" style="display: none;">
+        <div class="form-group">
+            <label for="approval-email">Approval Email:</label>
+            <textarea id="approval-email" name="approval-email" rows="10" readonly></textarea>
+        </div>
+        <div class="form-group">
+          <label for="reply">Your Reply:</label>
+          <textarea id="reply" name="reply" rows="5" required></textarea>
+        </div>
+        <button id="send-reply">Send</button>
+      </div>
+
+       <div id="result-message" style="margin-top: 20px; font-weight: bold;"></div>
+    </div>
+    <script type="module" src="/main.ts"></script>
+  </body>
+</html> 
+
+
+=========== FILE: backend\main.py ===========
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+import uvicorn
+import os
+
+# Import the graph runner function from our approval_graph module
+# Assuming this script is run from the parent directory of 'backend'
+# or backend is in PYTHONPATH
+from backend.approval_graph import run_approval_graph
+
+# --- Pydantic Models for Request/Response --- 
+
+class ApprovalRequest(BaseModel):
+    service_line: str
+    threshold: int
+    approval_email: str    # The email content shown to the user if threshold > 30
+    user_reply: str        # The user's reply text
+
+class ApprovalResponse(BaseModel):
+    status: str # e.g., "Approved", "Rejected", "Error", "Auto-Approved"
+    detail: str | None = None # Optional field for more details
+
+# --- FastAPI Application Setup ---
+
+app = FastAPI(title="Approval Processing API")
+
+# Configure CORS (Cross-Origin Resource Sharing)
+# Allows requests from the default Vite development server origin
+# Adjust the origins if your frontend runs on a different port/domain
+origins = [
+    "http://localhost",
+    "http://localhost:5173", # Default Vite dev server
+    "http://127.0.0.1:5173",
+    # Add other origins if needed (e.g., your deployed frontend URL)
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"]
+)
+
+@app.post("/process-approval")
+async def process_approval(request: ApprovalRequest) -> ApprovalResponse:
+    """
+    Endpoint to process an approval request.
+    - If threshold <= 30, it's auto-approved.
+    - If threshold > 30, it runs the LangGraph workflow to classify the reply.
+    """
+    print(f"Received request: {request.dict()}")
+
+    if request.threshold <= 30:
+        print("Threshold <= 30, auto-approving.")
+        # Optionally log this auto-approval somewhere
+        return ApprovalResponse(status="Auto-Approved", detail="Threshold was not exceeded.")
+    
+    # Threshold > 30, requires justification and reply analysis
+    if not request.user_reply:
+         # Should not happen if frontend logic is correct, but handle defensively
+         print("Error: Reply is required when threshold > 30")
+         raise HTTPException(status_code=400, detail="User reply is required when threshold > 30.")
+
+    try:
+        print("Running approval graph...")
+        # Run the LangGraph workflow
+        graph_result = await run_approval_graph(
+            service_line=request.service_line,
+            threshold=request.threshold,
+            approval_email=request.approval_email, 
+            user_reply=request.user_reply
+        )
+        
+        print(f"Graph Result: {graph_result}")
+
+        final_status = graph_result.get('final_status', 'Error') # Default to Error if key missing
+        detail_message = f"Reply classified as: {graph_result.get('classification', 'N/A')}"
+        
+        if final_status == "Error":
+             print("Error occurred within the approval graph.")
+             # Consider more specific error handling based on graph output
+             raise HTTPException(status_code=500, detail="Processing error in the approval workflow.")
+
+        return ApprovalResponse(status=final_status, detail=detail_message)
+
+    except Exception as e:
+        print(f"Error processing approval request: {e}")
+        # Log the exception details for debugging
+        # Consider more specific exception handling (e.g., Azure connection errors)
+        raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {str(e)}")
+
+# --- Run the application ---
+
+if __name__ == "__main__":
+    # Ensure environment variables are loaded (if not already by azure_gpt/approval_graph)
+    # from dotenv import load_dotenv
+    # load_dotenv() 
+    
+    # Get port from environment variable or default to 8000
+    port = int(os.environ.get("PORT", 8000))
+    print(f"Starting FastAPI server on port {port}...")
+    # Use reload=True for development to automatically reload server on code changes
+    # Explicitly specify the app location for uvicorn when running with python -m
+    uvicorn.run("backend.main:app", host="0.0.0.0", port=port, reload=True) 
+
+
+=========== FILE: backend\azure_gpt.py ===========
+import os
+import asyncio
+from dotenv import load_dotenv
+from langchain_openai import AzureChatOpenAI
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.output_parsers import StrOutputParser
+from langchain_core.messages import HumanMessage, SystemMessage # Keep imports for context
+
+# Load environment variables from .env file, overriding existing OS variables
+load_dotenv(override=True)
+
+# --- Configuration ---
+AZURE_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT")
+AZURE_API_KEY = os.getenv("AZURE_OPENAI_API_KEY")
+AZURE_DEPLOYMENT = os.getenv("AZURE_OPENAI_CHAT_DEPLOYMENT_NAME")
+AZURE_API_VERSION = os.getenv("AZURE_OPENAI_API_VERSION")
+
+# --- Initialize LLM Client ---
+llm = None
+try:
+    if not all([AZURE_ENDPOINT, AZURE_API_KEY, AZURE_DEPLOYMENT, AZURE_API_VERSION]):
+        raise ValueError("One or more Azure OpenAI environment variables are missing.")
+
+    llm = AzureChatOpenAI(
+        azure_endpoint=AZURE_ENDPOINT,
+        api_key=AZURE_API_KEY,
+        azure_deployment=AZURE_DEPLOYMENT,
+        api_version=AZURE_API_VERSION,
+        temperature=0 # We want deterministic classification
+    )
+    print("AzureChatOpenAI client initialized successfully.")
+except Exception as e:
+    print(f"ERROR: Error initializing AzureChatOpenAI: {e}")
+    # llm remains None
+
+# --- Output Parser ---
+output_parser = StrOutputParser()
+
+# --- Prompt Template ---
+# Using the tuple format ("role", "template_string") for reliable placeholder substitution
+prompt_template = ChatPromptTemplate.from_messages([
+    ("system", (
+        "Analyze the user reply sentiment based on the original request email. Is the reply an approval? "
+        "Consider replies like 'approved', 'yes', 'proceed', 'good to go', 'ok', 'confirm', 'confirmation' as clear approval. "
+        "Respond ONLY with the single word 'Approved' for approval or 'Not Approved' for anything else (rejection, questions, etc.)."
+        "Do not add any explanation or commentary."
+    )),
+    ("human", (
+        "Original Request Email:\n---\n{approval_email}\n---\n\n"
+        "User's Reply:\n---\n{user_reply}"
+    ))
+])
+
+# --- Classification Function ---
+async def get_reply_classification(approval_email: str, user_reply: str) -> str:
+    """
+    Classifies the user's reply as 'Approved' or 'Not Approved' using Azure GPT-4o,
+    considering the context of the original email.
+
+    Args:
+        approval_email: The content of the original email sent for approval.
+        user_reply: The text content of the user's reply.
+
+    Returns:
+        A string, either 'Approved' or 'Not Approved'.
+        Returns 'Error' if classification fails or LLM is not available.
+    """
+    if not llm:
+        print("ERROR: Azure LLM client is not initialized in get_reply_classification.")
+        return "Error"
+
+    # Basic validation
+    if not isinstance(approval_email, str) or not isinstance(user_reply, str):
+        print(f"ERROR: Invalid input types. Email: {type(approval_email)}, Reply: {type(user_reply)}")
+        return "Error"
+
+    cleaned_user_reply = user_reply.strip()
+    if not cleaned_user_reply:
+        # print("User reply is empty or whitespace only. Classifying as Not Approved.") # Optional: log if needed
+        return "Not Approved"
+
+    try:
+        input_data = {
+            "approval_email": approval_email,
+            "user_reply": user_reply
+        }
+
+        # Create the chain
+        chain = prompt_template | llm | output_parser
+
+        # Invoke the chain asynchronously
+        result = await chain.ainvoke(input_data)
+        # print(f"LLM Raw Result: '{result}'") # Optional: uncomment for debugging LLM output format
+
+        if result and isinstance(result, str):
+            if result.strip().lower() == "approved":
+                 # print(f"LLM result classified as: Approved") # Optional log
+                 return "Approved"
+            else:
+                 # print(f"LLM result classified as: Not Approved (Raw output: '{result}')") # Optional log
+                 return "Not Approved"
+        else:
+             print(f"WARNING: LLM produced unexpected output: '{result}'. Classifying as Not Approved.")
+             return "Not Approved"
+
+    except Exception as e:
+        print(f"ERROR during LLM classification: {e}")
+        print(f"Occurred with endpoint: {AZURE_ENDPOINT}, deployment: {AZURE_DEPLOYMENT}")
+        # Consider adding more detailed logging here if errors persist in production
+        # import traceback
+        # traceback.print_exc()
+        return "Error" # Indicate failure
+
+# --- Example Usage (Optional) ---
+async def main():
+    print("\n--- Running Example Classification ---")
+    if not llm:
+        print("Cannot run example: LLM client not initialized.")
+        return
+
+    test_approval_email = 'Subject: Action Required: test\n\nPlease review the request for Service Line: test (Threshold: 33).\n\nYour confirmation is needed to proceed. Please reply with your decision.\n\nThanks.'
+    test_user_reply_approve = 'Approved'
+    test_user_reply_confirm = 'confirmation'
+    test_user_reply_reject = 'No, cannot approve this now.'
+    test_user_reply_question = 'What is this for?'
+    test_user_reply_empty = ''
+
+    test_cases = {
+        "Direct 'Approved'": test_user_reply_approve,
+        "Confirmation": test_user_reply_confirm,
+        "Rejection": test_user_reply_reject,
+        "Question": test_user_reply_question,
+        "Empty Reply": test_user_reply_empty,
+    }
+
+    for name, reply in test_cases.items():
+        print(f"\n--- Testing Case: {name} ---")
+        print(f"User Reply: '{reply}'")
+        classification_result = await get_reply_classification(test_approval_email, reply)
+        # Print the final outcome clearly
+        print(f"Classification Result: {classification_result}")
+        # await asyncio.sleep(1) # Optional delay
+
+    print("\n--- Example Classification Finished ---")
+
+
+if __name__ == "__main__":
+    if llm:
+        try:
+            asyncio.run(main())
+        except Exception as main_e:
+            print(f"ERROR: Error running main async function: {main_e}")
+    else:
+        print("Script finished: LLM client failed to initialize, cannot run example.")
+
+
+=========== FILE: backend\approval_graph.py ===========
+from typing import TypedDict, Annotated, Union
+import operator
+from langgraph.graph import StateGraph, END
+
+# Import the classification function from our azure_gpt module
+# We use a relative import assuming main.py will run from the backend directory's parent
+# or that the backend directory is added to PYTHONPATH.
+# If running main.py directly within backend/, use: from azure_gpt import ...
+from .azure_gpt import get_reply_classification
+
+# Define the state structure for our graph
+class ApprovalState(TypedDict):
+    """Represents the state of the approval workflow."""
+    service_line: str
+    threshold: int
+    approval_email: str    # The email sent *to* the user (if threshold > 30)
+    user_reply: str        # The reply received *from* the user
+    classification: str    # Result of the LLM classification ('Approved', 'Not Approved', 'Error')
+    final_status: str      # The final outcome ('Approved', 'Rejected', 'Error')
+
+# Define the nodes for our graph
+
+async def classify_reply_node(state: ApprovalState) -> dict:
+    """Classifies the user's reply using the LLM."""
+    print("--- Classifying Reply Node ---")
+    user_reply = state['user_reply']
+    approval_email = state['approval_email']
+    
+    # Handle the case where threshold was <= 30 and no reply is expected/needed
+    # Or if the request failed before getting a reply
+    if not user_reply:
+        print("No user reply provided, assuming Not Approved.")
+        # If threshold > 30, lack of reply means rejection.
+        return {"classification": "Not Approved"} 
+        
+    # Pass both the original email and the reply
+    classification_result = await get_reply_classification(approval_email, user_reply)
+    print(f"Classification Result: {classification_result}")
+    return {"classification": classification_result}
+
+def determine_final_status_node(state: ApprovalState) -> dict:
+    """Determines the final status based on classification."""
+    print("--- Determining Final Status Node ---")
+    classification = state['classification']
+    
+    # Determine status based on the new classification values
+    final_status = "Rejected" # Default to Rejected
+    if classification == 'Approved':
+        final_status = "Approved"
+    elif classification == 'Error':
+        final_status = "Error"
+        print("Error during classification process.")
+    # 'Not Approved' maps to 'Rejected' final status
+    
+    print(f"Final Status: {final_status}")
+    return {"final_status": final_status}
+
+# Define the conditional logic for branching
+def decide_next_step(state: ApprovalState) -> str:
+    """Decides the next step based on the classification."""
+    print("--- Decision Node ---")
+    # In this simple graph, classification directly leads to final status determination
+    # This node might be more complex in graphs with more steps.
+    # For now, it always goes to the final status node after classification.
+    return "determine_final_status"
+
+
+# Create the StateGraph
+workflow = StateGraph(ApprovalState)
+
+# Add nodes to the graph
+workflow.add_node("classify_reply", classify_reply_node)
+workflow.add_node("determine_final_status", determine_final_status_node)
+
+# Define the entry point
+workflow.set_entry_point("classify_reply")
+
+# Add edges
+# After classifying, always go to determine the final status
+workflow.add_edge("classify_reply", "determine_final_status")
+# The determine_final_status node is the end of this simple workflow
+workflow.add_edge("determine_final_status", END)
+
+# Compile the graph into a runnable application
+approval_graph_app = workflow.compile()
+
+# Function to run the graph (can be called from FastAPI)
+async def run_approval_graph(service_line: str, threshold: int, approval_email: str, user_reply: str) -> dict:
+    """Runs the approval graph with the given inputs."""
+    initial_state = {
+        "service_line": service_line,
+        "threshold": threshold,
+        "approval_email": approval_email,
+        "user_reply": user_reply,
+        "classification": "", # Initial empty values
+        "final_status": ""     # Initial empty values
+    }
+    # Use ainvoke for asynchronous execution
+    final_state = await approval_graph_app.ainvoke(initial_state)
+    return final_state
+
+# Example Usage (Optional - for testing)
+# import asyncio
+# async def main_test():
+#     print("Testing Approved Scenario:")
+#     result_pos = await run_approval_graph("Data Migration", 50, "Subject: Approval...", "Sounds good, please proceed.")
+#     print("\nFinal State (Approved):", result_pos)
+# 
+#     print("\nTesting Rejected Scenario:")
+#     result_neg = await run_approval_graph("Cloud Setup", 45, "Subject: Approval...", "No, hold off for now.")
+#     print("\nFinal State (Rejected):", result_neg)
+# 
+#     print("\nTesting Auto-Approved Scenario (Simulated - Graph input):")
+#     # In reality, the graph might not run or run differently if threshold <= 30
+#     # This simulates providing no reply, leading to rejection by the graph's current logic
+#     result_auto = await run_approval_graph("Minor Update", 20, "", "") 
+#     print("\nFinal State (Auto/No Reply):", result_auto)
+#
+# if __name__ == "__main__":
+#     asyncio.run(main_test()) 
+
